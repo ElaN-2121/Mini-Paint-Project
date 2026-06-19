@@ -1,0 +1,4 @@
+WINDOW_WIDTH = 1000
+WINDOW_HEIGHT = 700
+
+WINDOW_TITLE = "Group One Mini Paint"
