@@ -1,89 +1,163 @@
-# ui/ui_manager.py
+# OpenGL and other dependencies imported
+from OpenGL.GL import (
+    glBegin, glEnd, glVertex2f, glColor3f,
+    glLineWidth, glRasterPos2f,
+    glMatrixMode, glLoadIdentity, glPushMatrix, glPopMatrix,
+    GL_LINES, GL_QUADS, GL_LINE_LOOP, GL_PROJECTION, GL_MODELVIEW,
+)
+from OpenGL.GLU import gluOrtho2D
+from OpenGL.GLUT import (
+    glutBitmapCharacter,
+    GLUT_BITMAP_8_BY_13, GLUT_BITMAP_9_BY_15,
+)
 
-import os
-from OpenGL.GL import *
-from OpenGL.GLUT import *
+from shapes.shape import Tool
+from core.constants import cfg, PALETTE, SIDEBAR
 
+# UI Manager
 class UIManager:
-    def __init__(self, shape_manager, selection_manager):
-        self.shape_manager = shape_manager
-        self.selection_manager = selection_manager
-        
-      
-        self.current_color = (1.0, 0.0, 0.0)
-        
-    def set_color(self, color_idx):
-        """Sets the active drawing color based on user keyboard input (1, 2, 3)."""
-        if color_idx == 1:
-            self.current_color = (1.0, 0.0, 0.0)  # Red
-        elif color_idx == 2:
-            self.current_color = (0.0, 1.0, 0.0)  # Green
-        elif color_idx == 3:
-            self.current_color = (0.0, 0.0, 1.0)  # Blue
-            
-        
-        selected_shape = self.selection_manager.get_selected_shape()
-        if selected_shape:
-            selected_shape.color = self.current_color
 
-    def delete_selected(self):
-        """Removes the currently selected shape from the application."""
-        selected_shape = self.selection_manager.get_selected_shape()
-        if selected_shape:
-            self.shape_manager.remove_shape(selected_shape)
-            self.selection_manager.clear_selection()
+    def __init__(self, state: dict, shape_mgr, selection_mgr):
+        self._state     = state
+        self._shapes    = shape_mgr
+        self._selection = selection_mgr
 
-    def clear_canvas(self):
-        """Wipes all shapes and clears selection."""
-        self.shape_manager.clear_all()
-        self.selection_manager.clear_selection()
+    # Public entry points 
+    def draw_sidebar(self):
+        WIN_W = cfg["WIN_W"]
+        WIN_H = cfg["WIN_H"]
+        VP_W  = cfg["VP_W"]
 
-    def draw_hud(self, current_tool_name, window_width, window_height):
-        """
-        Renders a simple on-screen text display showing the current tool, 
-        selected color, and a quick help menu.
-        """
-        # Switch to orthographic projection for 2D UI overlay rendering
+        self._push_pixel_ortho(WIN_W, WIN_H)
+
+        sx  = VP_W
+        tx0 = sx + 10
+        y   = WIN_H - 22
+
+        # Background
+        self._rect(sx, 0, SIDEBAR, WIN_H, (0.10, 0.10, 0.16))
+        glColor3f(0.28, 0.28, 0.40)
+        glBegin(GL_LINES); glVertex2f(sx, 0); glVertex2f(sx, WIN_H); glEnd()
+
+        # Title
+        self._text(tx0, y, "MINI PAINT", (0.40, 0.80, 1.00), GLUT_BITMAP_9_BY_15); y -= 6
+        self._divider(sx, y); y -= 18
+
+        # Tools
+        self._text(tx0, y, "[ TOOLS ]", (0.65, 0.65, 0.65)); y -= 16
+        for key, name, t in [('[L]', 'Line', Tool.LINE), ('[P]', 'Polyline', Tool.POLYLINE),
+                               ('[G]', 'Polygon', Tool.POLYGON), ('[S]', 'Select', Tool.SELECT)]:
+            active = self._state["tool"] == t
+            self._rect(sx + 4, y - 2, SIDEBAR - 8, 15,
+                       (0.18, 0.45, 0.80) if active else (0.06, 0.06, 0.10))
+            self._text(tx0 + 2, y, f" {key} {name}",
+                       (1, 1, 1) if active else (0.70, 0.70, 0.70))
+            y -= 16
+
+        y -= 4; self._divider(sx, y); y -= 16
+
+        # Polygon options
+        s = self._state
+        self._text(tx0, y, "[ POLYGON OPTIONS ]",          (0.65, 0.65, 0.65)); y -= 16
+        self._text(tx0, y, f" Sides: {s['poly_sides']}  (+/-)", (0.90, 0.90, 0.55)); y -= 16
+        self._text(tx0, y,
+                   " Fill: ON  [F]" if s["fill_polygon"] else " Fill: OFF [F]",
+                   (0.40, 0.90, 0.40) if s["fill_polygon"] else (0.70, 0.70, 0.70)); y -= 16
+        self._text(tx0, y, f" Width: {int(s['line_width'])}  [ / ]", (0.90, 0.90, 0.55)); y -= 16
+
+        y -= 4; self._divider(sx, y); y -= 16
+
+        # Colour palette
+        self._text(tx0, y, "[ COLOUR  (0-9) ]", (0.65, 0.65, 0.65)); y -= 20
+        cols, cw, ch, gap = 5, 22, 18, 5
+        for i, col in enumerate(PALETTE):
+            c, row = i % cols, i // cols
+            px = sx + 10 + c * (cw + gap)
+            py = y - row * (ch + gap)
+            glColor3f(*col)
+            glBegin(GL_QUADS)
+            glVertex2f(px,      py - ch); glVertex2f(px + cw, py - ch)
+            glVertex2f(px + cw, py     ); glVertex2f(px,      py     )
+            glEnd()
+            if i == s["color_idx"]:
+                glColor3f(1, 1, 0); glLineWidth(2)
+                glBegin(GL_LINE_LOOP)
+                glVertex2f(px - 1,      py - ch - 1); glVertex2f(px + cw + 1, py - ch - 1)
+                glVertex2f(px + cw + 1, py + 1     ); glVertex2f(px - 1,      py + 1     )
+                glEnd()
+        y -= 2 * (ch + gap) + 8
+
+        self._divider(sx, y); y -= 16
+
+        # Transform info
+        self._text(tx0, y, "[ TRANSFORM ]", (0.65, 0.65, 0.65)); y -= 16
+        sel = self._selection.selected
+        if s["tool"] == Tool.SELECT and self._selection.is_valid(len(self._shapes)):
+            sh = self._shapes[sel]
+            for label in [" Translate: Arrows", " Rotate:    R / E",
+                          " Scale uni: = / -",  " Scale X:   X / x", " Scale Y:   Y / y"]:
+                self._text(tx0, y, label, (0.80, 0.80, 0.80)); y -= 14
+            y -= 4
+            self._text(tx0, y, f" tx={sh.tx:.1f}  ty={sh.ty:.1f}", (0.50, 1.00, 0.50)); y -= 14
+            self._text(tx0, y, f" rot={sh.angle:.1f}deg",           (0.50, 1.00, 0.50)); y -= 14
+            self._text(tx0, y, f" sx={sh.sx:.2f}  sy={sh.sy:.2f}", (0.50, 1.00, 0.50)); y -= 14
+        else:
+            self._text(tx0, y, " (select a shape)", (0.45, 0.45, 0.45)); y -= 14
+
+        self._divider(sx, y); y -= 16
+
+        # Edit shortcuts
+        self._text(tx0, y, "[ EDIT ]", (0.65, 0.65, 0.65)); y -= 16
+        for label in [" [Z] Undo", " [Del] Delete sel", " [C] Clear all",
+                      " [Enter] End polyline", " [Esc] Cancel"]:
+            self._text(tx0, y, label, (0.75, 0.75, 0.75)); y -= 14
+
+        self._pop_pixel_ortho()
+
+    # Draw status bar
+    def draw_status_bar(self):
+        VP_W = cfg["VP_W"]
+        VP_H = cfg["VP_H"]
+
+        self._push_pixel_ortho(VP_W, VP_H)
+        self._rect(0, 0, VP_W, 20, (0.0, 0.0, 0.05))
+        mw = self._state["mouse_world"]
+        status = (f"Tool: {self._state['tool']:<8}  |  "
+                  f"World: ({mw[0]:.2f}, {mw[1]:.2f})  |  "
+                  f"Shapes: {len(self._shapes)}")
+        self._text(6, 5, status, (0.50, 0.90, 0.50))
+        self._pop_pixel_ortho()
+
+    # Private draw helpers 
+    def _text(self, x, y, text, color=(1, 1, 1), font=GLUT_BITMAP_8_BY_13):
+        glColor3f(*color)
+        glRasterPos2f(x, y)
+        for ch in text:
+            glutBitmapCharacter(font, ord(ch))
+
+    # Draw a rectangle
+    def _rect(self, x, y, w, h, color):
+        glColor3f(*color)
+        glBegin(GL_QUADS)
+        glVertex2f(x,     y    ); glVertex2f(x + w, y    )
+        glVertex2f(x + w, y + h); glVertex2f(x,     y + h)
+        glEnd()
+
+    # Draw a horizontal line
+    def _divider(self, sx, y):
+        glColor3f(0.28, 0.28, 0.40)
+        glBegin(GL_LINES)
+        glVertex2f(sx + 4, y); glVertex2f(sx + SIDEBAR - 4, y)
+        glEnd()
+
+    def _push_pixel_ortho(self, w, h):
         glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        glOrtho(0, window_width, 0, window_height, -1, 1)
-        
+        glPushMatrix(); glLoadIdentity()
+        gluOrtho2D(0, w, 0, h)
         glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        
-       
-        glDisable(GL_DEPTH_TEST)
-        
-       
-        color_name = "Red"
-        if self.current_color == (0.0, 1.0, 0.0): color_name = "Green"
-        elif self.current_color == (0.0, 0.0, 1.0): color_name = "Blue"
+        glPushMatrix(); glLoadIdentity()
 
-        ui_lines = [
-            f"Active Tool: {current_tool_name}",
-            f"Active Color: {color_name}",
-            "-------------------------",
-            "Controls:",
-            "  L: Line | R: Rect | P: Poly | S: Select",
-            "  1: Red  | 2: Green | 3: Blue",
-            "  [Delete]: Remove Shape",
-            "  [C]: Clear Canvas"
-        ]
-        
-       
-        glColor3f(1.0, 1.0, 1.0) # White text
-        y_offset = window_height - 30
-        for line in ui_lines:
-            glRasterPos2i(20, y_offset)
-            for char in line:
-                glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, ord(char))
-            y_offset -= 20
-            
-       
-        glEnable(GL_DEPTH_TEST)
-        glMatrixMode(GL_PROJECTION)
+    def _pop_pixel_ortho(self):
         glPopMatrix()
+        glMatrixMode(GL_PROJECTION); glPopMatrix()
         glMatrixMode(GL_MODELVIEW)
-        glPopMatrix()
