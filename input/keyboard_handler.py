@@ -1,93 +1,124 @@
-# input/keyboard_handler.py
+from OpenGL.GLUT import (
+    glutPostRedisplay,
+    GLUT_KEY_LEFT, GLUT_KEY_RIGHT, GLUT_KEY_UP, GLUT_KEY_DOWN,
+)
 
-import pygame  
-from core.constants import *  
+from shapes.shape import Tool
+from core.constants import PALETTE
+from transform.transform_manager import TransformManager
+
 
 class KeyboardHandler:
-    def __init__(self, shape_manager, selection_manager, ui_manager, transform_manager):
 
-        self.shape_manager = shape_manager
-        self.selection_manager = selection_manager
-        self.ui_manager = ui_manager
-        self.transform_manager = transform_manager
-        
-        self.current_mode = "DRAW" 
+    def __init__(self, state: dict, shape_mgr, selection_mgr):
+        self._state     = state
+        self._shapes    = shape_mgr
+        self._selection = selection_mgr
+        self._tm        = TransformManager()
 
-    def handle_keypress(self, key):
+    #  Public GLUT callbacks 
+    def on_key(self, key, x, y):
+        key  = key.decode("utf-8", errors="ignore") if isinstance(key, bytes) else key
+        s    = self._state
+        sel  = self._selection.selected
+        tool = s["tool"]
 
-        # --- Mode & Tool Switching ---
-        if key == pygame.K_l:
-            self.current_mode = "DRAW"
-            self.shape_manager.set_current_tool("LINE")
-            self.ui_manager.update_tool_display("Line Tool Active")
-            
-        elif key == pygame.K_r:
-            self.current_mode = "DRAW"
-            self.shape_manager.set_current_tool("RECTANGLE")
-            self.ui_manager.update_tool_display("Rectangle Tool Active")
-            
-        elif key == pygame.K_p:
-            self.current_mode = "DRAW"
-            self.shape_manager.set_current_tool("POLYGON")
-            self.ui_manager.update_tool_display("Polygon Tool Active")
-            
-        elif key == pygame.K_s:
-            self.current_mode = "SELECT"
-            self.ui_manager.update_tool_display("Selection Mode Active")
+        # Tool switching
+        if   key in ('l', 'L'): self._switch_tool(Tool.LINE)
+        elif key in ('p', 'P'): self._switch_tool(Tool.POLYLINE)
+        elif key in ('g', 'G'): self._switch_tool(Tool.POLYGON)
+        elif key in ('s', 'S'): self._switch_tool(Tool.SELECT)
 
-        # --- Canvas Utilities & Actions ---
-        elif key == pygame.K_DELETE:
-            # Grab selected item and cleanly dispatch to Mike's UI/Canvas system
-            selected_shape = self.selection_manager.get_selected_shape()
-            if selected_shape:
-                self.ui_manager.delete_shape(selected_shape, self.shape_manager)
-                self.selection_manager.clear_selection()
-                
-        elif key == pygame.K_c:
-            self.ui_manager.clear_canvas(self.shape_manager)
-            self.selection_manager.clear_selection()
+        # Polygon sides / uniform scale
+        elif key == '+':
+            s["poly_sides"] = min(20, s["poly_sides"] + 1)
+        elif key == '-':
+            if tool == Tool.SELECT and self._selection.is_valid(len(self._shapes)):
+                self._tm.scale_down(self._shapes[sel])
+            else:
+                s["poly_sides"] = max(3, s["poly_sides"] - 1)
+        elif key == '=':
+            if tool == Tool.SELECT and self._selection.is_valid(len(self._shapes)):
+                self._tm.scale_up(self._shapes[sel])
+            else:
+                s["poly_sides"] = min(20, s["poly_sides"] + 1)
 
-        # --- Active Palette Color Selection ---
-        elif key == pygame.K_1:
-            self.ui_manager.set_current_color((1.0, 0.0, 0.0))  # Red
-        elif key == pygame.K_2:
-            self.ui_manager.set_current_color((0.0, 1.0, 0.0))  # Green
-        elif key == pygame.K_3:
-            self.ui_manager.set_current_color((0.0, 0.0, 1.0))  # Blue
+        # Fill / line width
+        elif key in ('f', 'F'): s["fill_polygon"] = not s["fill_polygon"]
+        elif key == '[': s["line_width"] = max(1.0,  s["line_width"] - 1)
+        elif key == ']': s["line_width"] = min(10.0, s["line_width"] + 1)
 
-        # --- Real-Time Transformation Shortcuts (Selection Mode Only) ---
-        elif self.current_mode == "SELECT":
-            selected_shape = self.selection_manager.get_selected_shape()
-            if selected_shape:
-                self._handle_transformations(key, selected_shape)
+        # Colour shortcuts 0-9
+        elif key in "0123456789":
+            s["color_idx"] = int(key)
 
-    def _handle_transformations(self, key, shape):
+        # Rotate (Select mode)
+        elif key in ('r', 'R') and self._selection.is_valid(len(self._shapes)):
+            self._tm.rotate_ccw(self._shapes[sel])
+        elif key in ('e', 'E') and self._selection.is_valid(len(self._shapes)):
+            self._tm.rotate_cw(self._shapes[sel])
 
-        MOVE_SPEED = 5.0
-        ROTATION_SPEED = 5.0  # Degrees
-        SCALE_SPEED = 0.1
+        # Non-uniform scale
+        elif key == 'X' and self._selection.is_valid(len(self._shapes)):
+            self._tm.scale_x_up(self._shapes[sel])
+        elif key == 'x' and self._selection.is_valid(len(self._shapes)):
+            self._tm.scale_x_down(self._shapes[sel])
+        elif key == 'Y' and self._selection.is_valid(len(self._shapes)):
+            self._tm.scale_y_up(self._shapes[sel])
+        elif key == 'y' and self._selection.is_valid(len(self._shapes)):
+            self._tm.scale_y_down(self._shapes[sel])
 
-        # Translation (Arrow Keys)
-        if key == pygame.K_LEFT:
-            shape.transform.tx -= MOVE_SPEED
-        elif key == pygame.K_RIGHT:
-            shape.transform.tx += MOVE_SPEED
-        elif key == pygame.K_UP:
-            shape.transform.ty += MOVE_SPEED
-        elif key == pygame.K_DOWN:
-            shape.transform.ty -= MOVE_SPEED
+        # Finish polyline (Enter)
+        elif key == '\r':
+            if tool == Tool.POLYLINE and s["drawing"] and len(s["pending_pts"]) >= 2:
+                self._shapes.commit_polyline(
+                    s["pending_pts"],
+                    PALETTE[s["color_idx"]], s["line_width"], s["fill_polygon"]
+                )
+                s["drawing"] = False
 
-        # Rotation (Q / E keys)
-        elif key == pygame.K_q:
-            shape.transform.rotation += ROTATION_SPEED
-        elif key == pygame.K_e:
-            shape.transform.rotation -= ROTATION_SPEED
+        # Undo (Z)
+        elif key in ('z', 'Z'):
+            if not s["drawing"]:
+                self._shapes.undo()
+                self._selection.clamp(len(self._shapes))
+            elif tool == Tool.POLYLINE:
+                if s["pending_pts"]:
+                    s["pending_pts"].pop()
+                if not s["pending_pts"]:
+                    s["drawing"] = False
 
-        # Scaling (Equals/Plus to scale up, Minus to scale down)
-        elif key == pygame.K_EQUALS or key == pygame.K_KP_PLUS:
-            shape.transform.sx += SCALE_SPEED
-            shape.transform.sy += SCALE_SPEED
-        elif key == pygame.K_MINUS or key == pygame.K_KP_MINUS:
-            # Prevent invert scaling or division by zero errors
-            shape.transform.sx = max(0.1, shape.transform.sx - SCALE_SPEED)
-            shape.transform.sy = max(0.1, shape.transform.sy - SCALE_SPEED)
+        # Delete selected (Del)
+        elif key == '\x7f':
+            if self._selection.is_valid(len(self._shapes)):
+                self._shapes.delete(self._selection.selected)
+                self._selection.deselect()
+
+        # Clear canvas (C)
+        elif key in ('c', 'C'):
+            self._shapes.clear()
+            self._selection.deselect()
+            s["drawing"] = False
+
+        # Cancel (Esc)
+        elif key == '\x1b':
+            s["drawing"]     = False
+            s["pending_pts"] = []
+
+        glutPostRedisplay()
+
+    def on_special(self, key, x, y):
+        sel = self._selection.selected
+        if self._state["tool"] != Tool.SELECT or not self._selection.is_valid(len(self._shapes)):
+            return
+        sh = self._shapes[sel]
+        if   key == GLUT_KEY_LEFT:  self._tm.move_left(sh)
+        elif key == GLUT_KEY_RIGHT: self._tm.move_right(sh)
+        elif key == GLUT_KEY_UP:    self._tm.move_up(sh)
+        elif key == GLUT_KEY_DOWN:  self._tm.move_down(sh)
+        glutPostRedisplay()
+
+    #  Helpers 
+    def _switch_tool(self, tool):
+        self._state["tool"]    = tool
+        self._state["drawing"] = False
